@@ -388,11 +388,6 @@ class AVSensePlugin(Star):
 
         if not self.enable_asr:
             return ""
-        # 框架 STT 没配时才需要本机服务；这里先尝试把它准备好
-        pm = getattr(self.context, "provider_manager", None)
-        has_framework_stt = bool(getattr(pm, "curr_stt_provider_inst", None)) if pm else False
-        if not has_framework_stt:
-            await self._ensure_local_asr()
         wav = self.work_dir / f"a_{uuid.uuid4().hex}.wav"
         args = [self.ffmpeg, "-y", "-loglevel", "error"]
         if limit:
@@ -428,7 +423,17 @@ class AVSensePlugin(Star):
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 return str(json.loads(r.read().decode()).get("text") or "")
 
-        # ① 先用 AstrBot 自带的语音转文字 provider（别人装完只要配了 STT 就能用）
+        # ① 本机识别优先（不花钱；没有可用的本机引擎就跳过这一步）
+        if await self._ensure_local_asr() and self.asr_url:
+            try:
+                text = (await asyncio.to_thread(_post)).strip()
+                if text:
+                    logger.info("[AVSense] 本机转写成功（%s 字）", len(text))
+                    return text
+            except Exception as exc:  # noqa: BLE001
+                logger.info("[AVSense] 本机识别失败（%s），看框架 STT", exc)
+
+        # ② 兜底：AstrBot 自带的语音转文字 provider（一般没人配，所以放后面）
         try:
             pm = getattr(self.context, "provider_manager", None)
             stt = getattr(pm, "curr_stt_provider_inst", None) if pm else None
@@ -438,16 +443,8 @@ class AVSensePlugin(Star):
                     logger.info("[AVSense] 用框架 STT 转写成功（%s 字）", len(text))
                     return str(text).strip()
         except Exception as exc:  # noqa: BLE001
-            logger.info("[AVSense] 框架 STT 不可用（%s），改用本机识别服务", exc)
-
-        # ② 退回本机 ASR 服务
-        if not self.asr_url:
-            return ""
-        try:
-            return (await asyncio.to_thread(_post)).strip()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[AVSense] 语音识别失败（本机 9881 也没开？）：%s", exc)
-            return ""
+            logger.info("[AVSense] 框架 STT 也不可用（%s）", exc)
+        return ""
 
     # ── 抽帧计划 ──────────────────────────────────────────────────────
     def plan_timestamps(self, duration: float) -> list[float]:
