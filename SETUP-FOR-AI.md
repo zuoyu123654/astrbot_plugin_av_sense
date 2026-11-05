@@ -64,7 +64,8 @@ ffprobe -version
 "provider_stt_settings": { "enable": true, "provider_id": "<你的 STT provider id>" }
 ```
 
-插件会自动用它转写**语音消息**和**视频音轨**（日志：`[AVSense] 用框架 STT 转写成功（N 字）`）。
+插件会自动用它转写**语音消息**和**视频音轨**——**同一套，只配一次**
+（日志：`[AVSense] 用框架 STT 转写成功（N 字）`）。
 
 > ⚠️ 用 `openai_whisper_api` 这类适配器时，注意它在 provider 条目里读的是 **`api_key`** 字段
 > （不是 `key` 数组），否则会报 `Missing credentials`。
@@ -75,10 +76,20 @@ ffprobe -version
 
 - 需要：`funasr` + 三个模型目录（`speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch`、
   `speech_fsmn_vad_zh-cn-16k-common-pytorch`、`punc_ct-transformer_zh-cn-common-vocab272727-pytorch`）
-- 起服务（示例）：`python asr_server.py --port 9881`，暴露 `POST /v1/audio/transcriptions`，返回 `{"text": "..."}`
-- 插件侧只要把 `asr_url` 指过去（默认就是 `http://127.0.0.1:9881/v1/audio/transcriptions`）
+- **本机用的是 funasr paraformer（中文，离线）**，不是 ffmpeg——ffmpeg 只会转码，不会认字。
+- 三个模型（ModelScope，`iic/…`）：
+  - `speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch`（识别，约 848MB）
+  - `speech_fsmn_vad_zh-cn-16k-common-pytorch`（断句，约 4MB）
+  - `punc_ct-transformer_zh-cn-common-vocab272727-pytorch`（加标点，约 283MB）
+- 服务脚本：本仓库 `optional_asr/asr_server.py`（OpenAI 兼容，`POST /v1/audio/transcriptions` → `{"text":"..."}`）
+- 起服务：`python asr_server.py --port 9881`
+- 插件侧把 `asr_url` 指过去即可（默认就是 `http://127.0.0.1:9881/v1/audio/transcriptions`）
 
-没装成也没关系：**视频的画面部分照样能用**，只是听不见声音。
+**如果本机什么都没有**：不用专门为语音再装一套——先在 AstrBot 面板里配一个「语音转文字」provider 就行；
+两者都没有时，插件只会跳过转写，**视频画面照样能看**。
+
+> 为什么不用「只装 ffmpeg」了事：ffmpeg 抽出来的是一段 wav，它不是语音识别器。
+> 要文字，必须有一个 ASR 模型（云端 API 或本地模型都算），这一步绕不过去。
 
 ---
 
@@ -94,6 +105,23 @@ ffprobe -version
 > 真不能看图的模型，会在收到图片时报错或直接忽略——那就必须换模型。
 
 自检：把任意一张图片发给机器人，她能说出画面内容 ⇒ 多模态通了。
+
+> 💡 **实测结论：DeepSeek 的 `deepseek-chat` 可以直接吃图片**（2026-11-06 验证）。
+> 也就是说 AstrBot 里用 `deepseek-official / deepseek-chat` 的人**不用换模型**，抽帧这条路直接能用。
+> 想自己验证一次，用下面这段（把 KEY 换成 provider 里的 key）：
+>
+> ```python
+> import base64, json, urllib.request
+> img = open("test.jpg", "rb").read()
+> body = {"model": "deepseek-chat", "messages": [{"role": "user", "content": [
+>     {"type": "text", "text": "这张图里是什么？"},
+>     {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(img).decode()}},
+> ]}]}
+> req = urllib.request.Request("https://api.deepseek.com/v1/chat/completions",
+>     data=json.dumps(body).encode(),
+>     headers={"Authorization": "Bearer <KEY>", "Content-Type": "application/json"})
+> print(json.loads(urllib.request.urlopen(req).read())["choices"][0]["message"]["content"])
+> ```
 
 ---
 
