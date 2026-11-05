@@ -1,0 +1,82 @@
+{
+  "enable_voice": {
+    "type": "bool",
+    "description": "语音消息转文字（本机 ASR，9881）。",
+    "default": true
+  },
+  "enable_video": {
+    "type": "bool",
+    "description": "视频抽帧看图 + 音轨转文字。",
+    "default": true
+  },
+  "max_video_seconds": {
+    "type": "int",
+    "description": "视频只处理前多少秒（默认 180 = 3 分钟），超长视频不会卡住。",
+    "default": 180
+  },
+  "frame_step_seconds": {
+    "type": "float",
+    "description": "每隔多少秒抽一帧（默认 10）。另外始终会抽开头一帧和最后一帧。",
+    "default": 10
+  },
+  "min_frames": {
+    "type": "int",
+    "description": "至少抽几帧（默认 5）。视频太短时会自动压缩间隔凑够这个数。",
+    "default": 5
+  },
+  "max_frames": {
+    "type": "int",
+    "description": "最多抽几帧（默认 24），防止 3 分钟视频一次塞太多图。",
+    "default": 24
+  },
+  "frame_side": {
+    "type": "int",
+    "description": "每帧最长边像素（默认 768），越小越省 token。",
+    "default": 768
+  },
+  "max_video_mb": {
+    "type": "int",
+    "description": "下载视频的大小上限（MB，默认 200）。",
+    "default": 200
+  },
+  "enable_asr": {
+    "type": "bool",
+    "description": "把语音/视频里的声音转成文字（需要本机 ASR 服务在 9881）。",
+    "default": true
+  },
+  "asr_url": {
+    "type": "string",
+    "description": "本机 ASR 地址（默认 http://127.0.0.1:9881/v1/audio/transcriptions）。",
+    "default": "http://127.0.0.1:9881/v1/audio/transcriptions"
+  },
+  "timeout": {
+    "type": "int",
+    "description": "单步超时（秒，默认 120）。",
+    "default": 120
+  },
+  "scene_detect": {
+    "type": "bool",
+    "description": "除了每 10 秒的基准帧，再在「换画面/换镜头」的地方补几帧（推荐开）。",
+    "default": true
+  },
+  "scene_threshold": {
+    "type": "float",
+    "description": "场景切换的敏感度（0.1~0.6，默认 0.3）。越小越容易补帧。",
+    "default": 0.3
+  },
+  "dedupe_diff": {
+    "type": "float",
+    "description": "相似帧去重阈值（0~20，默认 3）：和上一张灰度差小于它就丢弃，避免给一堆一模一样的图。",
+    "default": 3.0
+  },
+  "retain_days": {
+    "type": "float",
+    "description": "插件存下来的临时图片/音频保留几天后自动删除（默认 7 天；0 = 不自动删）。",
+    "default": 7
+  },
+  "cleanup_interval_minutes": {
+    "type": "int",
+    "description": "后台多久清理一次过期文件（分钟，默认 60）。",
+    "default": 60
+  }
+}

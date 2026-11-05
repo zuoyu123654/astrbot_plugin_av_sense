@@ -1,0 +1,24 @@
+name: astrbot_plugin_av_sense
+display_name: 语音视频感知
+short_desc: 语音消息转文字 + 视频抽帧看图（只处理前 3 分钟），让她真的听得见、看得懂
+desc: >-
+  QQ 里直接发的语音和视频，AstrBot 原本都只是「一个文件名」：语音是空消息，
+  视频只留一句「空消息、没找到链接（组件：Video）」。这个插件把两者都补上。
+
+  1. 语音消息（Record）→ 下载 → 本机 ASR 转文字 → 注入模型
+     （框架自己已经转出文字的就不重复转）
+  2. 视频消息（Video）→ **只处理前 3 分钟**（避免长视频卡住）
+     → 开头一帧 + 每 10 秒一帧 + 最后一帧；不足 5 帧就把间隔压短补到 5 帧
+     → 帧当图片喂给模型看，同时把前 3 分钟的音轨转文字
+
+  只依赖 ffmpeg/ffprobe、本机 ASR 服务（端口 9881）和 aiocqhttp，不调用别的插件。
+version: 0.2.0
+author: paopao
+repo: https://github.com/zuoyu123654/astrbot_plugin_av_sense
+astrbot_version: ">=4.17.0"
+support_platforms:
+  - aiocqhttp
+tags:
+  - 语音识别
+  - 视频
+  - 识图
