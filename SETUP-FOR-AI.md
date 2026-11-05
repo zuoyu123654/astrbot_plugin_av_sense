@@ -70,7 +70,16 @@ ffprobe -version
 > ⚠️ 用 `openai_whisper_api` 这类适配器时，注意它在 provider 条目里读的是 **`api_key`** 字段
 > （不是 `key` 数组），否则会报 `Missing credentials`。
 
-### 3.2 自建 ASR（离线、不花钱）
+### 3.2 自建 ASR（离线、不花钱）—— 插件会自动找、自动起
+
+**默认引擎是 faster-whisper**：插件会在本机找带 `faster_whisper` 的 python（例如各种
+GPT-SoVITS 的 `runtime/python.exe`），自动拉起 `optional_asr/asr_server.py`（端口 9881）。
+首次启动会从 hf-mirror 下 `small` 模型（约 460MB），之后就走本地缓存。
+
+- 想换精度/速度：`whisper_model` = `tiny`/`base`/`small`/`medium`
+- 想换引擎：`local_asr_engine` = `faster-whisper`（默认）/ `funasr`（中文分词更细）/ `auto`
+- 手动指定解释器：`local_asr_python`
+
 
 本机用过一套 GPT-SoVITS 自带 funasr（中文 paraformer）的 OpenAI 兼容服务：
 

@@ -37,6 +37,24 @@ PLUGIN_NAME = "astrbot_plugin_av_sense"
 PLUGIN_VERSION = "0.2.0"
 
 
+def _has_whisper(python: str | None) -> bool:
+    """那个 python 里有没有 faster_whisper（有就可以不用 funasr 模型）。"""
+
+    if not python:
+        return False
+    try:
+        import subprocess
+
+        r = subprocess.run(
+            [python, "-c", "import faster_whisper"],
+            capture_output=True,
+            timeout=20,
+        )
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @register(
     PLUGIN_NAME,
     "paopao",
@@ -80,6 +98,15 @@ class AVSensePlugin(Star):
         except (TypeError, ValueError):
             self.retain_days = 7.0
         self.cleanup_minutes = max(10, int(cfg.get("cleanup_interval_minutes", 60) or 60))
+        # 本机 ASR 自动探测（有 funasr 模型 + 带 funasr 的 python 就直接用）
+        self.auto_local_asr = bool(cfg.get("auto_local_asr", True))
+        self.local_asr_python = str(cfg.get("local_asr_python", "") or "").strip()
+        self.local_asr_port = max(1024, int(cfg.get("local_asr_port", 9881) or 9881))
+        self.local_asr_engine = str(cfg.get("local_asr_engine", "faster-whisper") or "faster-whisper")
+        self.whisper_model = str(cfg.get("whisper_model", "small") or "small")
+        self._asr_proc = None
+        self._asr_ready = False
+        self._asr_checked = False
 
         self.ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
         self.ffprobe = shutil.which("ffprobe") or "ffprobe"
@@ -101,6 +128,12 @@ class AVSensePlugin(Star):
         task = getattr(self, "_cleaner", None)
         if task and not task.done():
             task.cancel()
+        proc = getattr(self, "_asr_proc", None)
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
 
     async def _cleanup_once(self, verbose: bool = False) -> int:
         """删掉超过 retain_days 的文件；返回删除数量。"""
@@ -219,11 +252,147 @@ class AVSensePlugin(Star):
         except json.JSONDecodeError:
             return {}
 
+    # ── 本机 ASR：自动探测 + 自动拉起 ────────────────────────────────
+    def _find_asr_models(self) -> str | None:
+        """找 funasr 风格的模型目录（speech_paraformer-large*）。找不到返回 None。
+
+        注意：Windows 上不能用 Path(".").glob("D:/...")，那不是绝对路径匹配。
+        """
+
+        roots: list[Path] = [Path("D:/app1"), Path("C:/app1"), Path("D:/"), Path("C:/")]
+        roots += [Path.home()]
+        seen: set[str] = set()
+        for root in roots:
+            if not root.is_dir():
+                continue
+            try:
+                for gsv in list(root.glob("GPT-SoVITS*")) + list(root.glob("*/GPT-SoVITS*")):
+                    for sub in (
+                        gsv / "tools" / "asr" / "models",
+                        gsv / "GPT-SoVITS" / "tools" / "asr" / "models",
+                    ):
+                        key = str(sub).lower()
+                        if key in seen or not sub.is_dir():
+                            continue
+                        seen.add(key)
+                        if any(sub.glob("speech_paraformer-large*")):
+                            return str(sub)
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    def _find_asr_python(self) -> str | None:
+        """找一个 import 得动 funasr 的 python。"""
+
+        if self.local_asr_python and Path(self.local_asr_python).is_file():
+            return self.local_asr_python
+        import sys as _sys
+
+        cands: list[str] = []
+        for root in (Path("D:/app1"), Path("C:/app1"), Path("D:/"), Path.home()):
+            if not root.is_dir():
+                continue
+            try:
+                for gsv in list(root.glob("GPT-SoVITS*")) + list(root.glob("*/GPT-SoVITS*")):
+                    for py in (
+                        gsv / "runtime" / "python.exe",
+                        gsv / "GPT-SoVITS" / "runtime" / "python.exe",
+                    ):
+                        if py.is_file():
+                            cands.append(str(py))
+            except Exception:  # noqa: BLE001
+                continue
+        if cands:
+            return cands[0]
+        # 实在没有就用 AstrBot 自己的解释器碰碰运气（有些人是全局装的）
+        return _sys.executable
+
+    async def _port_open(self, port: int) -> bool:
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", port), timeout=1.5
+            )
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:  # noqa: BLE001
+                pass
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def _ensure_local_asr(self) -> bool:
+        """确保有可用的本机 ASR 服务；返回是否可用（结果缓存，只探测一次）。"""
+
+        if self._asr_ready:
+            return True
+        if self._asr_checked and not self._asr_ready:
+            return False
+        self._asr_checked = True
+
+        # 已经在跑（不管是谁起的）
+        if await self._port_open(self.local_asr_port):
+            self.asr_url = f"http://127.0.0.1:{self.local_asr_port}/v1/audio/transcriptions"
+            self._asr_ready = True
+            logger.info("[AVSense] 本机 ASR 已在运行（端口 %s）", self.local_asr_port)
+            return True
+
+        if not self.auto_local_asr:
+            return False
+
+        engine = self.local_asr_engine or "faster-whisper"
+        models = self._find_asr_models()
+        python = self._find_asr_python()
+        script = Path(__file__).resolve().parent / "optional_asr" / "asr_server.py"
+        need_models = engine == "funasr" or (engine == "auto" and not _has_whisper(python))
+        if (need_models and not models) or not python or not script.is_file():
+            logger.info(
+                "[AVSense] 没有可用的本机 ASR（引擎=%s｜模型=%s｜python=%s｜脚本=%s），跳过转写",
+                engine, bool(models), python or "无", script.is_file(),
+            )
+            return False
+
+        try:
+            env = dict(**__import__("os").environ)
+            env["AVSENSE_ASR_MODELS"] = models
+            args = [python, str(script), "--port", str(self.local_asr_port), "--engine", engine]
+            if models:
+                args += ["--models", models]
+            if engine != "funasr":
+                args += ["--whisper-model", self.whisper_model]
+            self._asr_proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=env,
+            )
+            logger.info(
+                "[AVSense] 正在拉起本机 ASR（引擎 %s，python %s）…", engine, python
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[AVSense] 拉起本机 ASR 失败：%s", exc)
+            return False
+
+        for _ in range(60):
+            if await self._port_open(self.local_asr_port):
+                self.asr_url = f"http://127.0.0.1:{self.local_asr_port}/v1/audio/transcriptions"
+                self._asr_ready = True
+                logger.info("[AVSense] 本机 ASR 就绪（端口 %s，引擎 %s）", self.local_asr_port, engine)
+                return True
+            await asyncio.sleep(2)
+        logger.warning("[AVSense] 本机 ASR 两分钟内没起来，先不用转写")
+        return False
+
     async def _transcribe(self, src: str, limit: float | None = None) -> str:
         """抽音轨（可选截断前 limit 秒）→ 本机 ASR。"""
 
         if not self.enable_asr:
             return ""
+        # 框架 STT 没配时才需要本机服务；这里先尝试把它准备好
+        pm = getattr(self.context, "provider_manager", None)
+        has_framework_stt = bool(getattr(pm, "curr_stt_provider_inst", None)) if pm else False
+        if not has_framework_stt:
+            await self._ensure_local_asr()
         wav = self.work_dir / f"a_{uuid.uuid4().hex}.wav"
         args = [self.ffmpeg, "-y", "-loglevel", "error"]
         if limit:

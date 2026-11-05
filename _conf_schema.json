@@ -78,5 +78,30 @@
     "type": "int",
     "description": "后台多久清理一次过期文件（分钟，默认 60）。",
     "default": 60
+  },
+  "auto_local_asr": {
+    "type": "bool",
+    "description": "AstrBot 没配语音转文字时，自动找本机的 funasr 模型并拉起识别服务（端口 9881）。",
+    "default": true
+  },
+  "local_asr_python": {
+    "type": "string",
+    "description": "带 funasr 的 python 路径（留空 = 自动找 GPT-SoVITS 的 runtime/python.exe）。",
+    "default": ""
+  },
+  "local_asr_port": {
+    "type": "int",
+    "description": "本机识别服务端口（默认 9881）。",
+    "default": 9881
+  },
+  "local_asr_engine": {
+    "type": "string",
+    "description": "本机识别引擎：faster-whisper（默认，准且支持多语言）/ funasr（中文分词更细）/ auto。",
+    "default": "faster-whisper"
+  },
+  "whisper_model": {
+    "type": "string",
+    "description": "faster-whisper 的模型（tiny/base/small/medium，默认 small；也可填本地目录）。",
+    "default": "small"
   }
 }

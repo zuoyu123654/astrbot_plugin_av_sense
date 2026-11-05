@@ -18,40 +18,93 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-GSV = Path(r"D:\app1\GPT-SoVITS-v2pro-20250604-nvidia50\GPT-SoVITS-v2pro-20250604-nvidia50")
-MODELS = GSV / "tools" / "asr" / "models"
-ASR = MODELS / "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
-VAD = MODELS / "speech_fsmn_vad_zh-cn-16k-common-pytorch"
-PUNC = MODELS / "punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
+# 模型目录：--models > 环境变量 > 本机默认位置
+DEFAULT_GSV = Path(r"D:\app1\GPT-SoVITS-v2pro-20250604-nvidia50\GPT-SoVITS-v2pro-20250604-nvidia50")
+ENGINE = "auto"
+WHISPER_MODEL = "small"
+MODELS: Path | None = None
+ASR: Path | None = None
+VAD: Path | None = None
+PUNC: Path | None = None
 
 _model = None
+_engine = "未加载"  # "faster-whisper" / "funasr"
 _lock = threading.Lock()
 
 
-def get_model():
-    global _model
-    with _lock:
-        if _model is None:
-            from funasr import AutoModel
+def resolve_models(path: str | None = None) -> Path:
+    """确定模型根目录，并找出三个子模型。"""
 
-            print("[asr] 加载 funasr paraformer …", flush=True)
-            _model = AutoModel(
-                model=str(ASR),
-                vad_model=str(VAD),
-                punc_model=str(PUNC),
-                disable_update=True,
-            )
-            print("[asr] 模型就绪", flush=True)
-    return _model
+    global MODELS, ASR, VAD, PUNC
+    import os
+
+    cand = path or os.environ.get("AVSENSE_ASR_MODELS") or ""
+    root = Path(cand) if cand else (DEFAULT_GSV / "tools" / "asr" / "models")
+    if not root.is_dir():
+        raise SystemExit(f"[asr] 模型目录不存在：{root}")
+    asr = next(iter(root.glob("speech_paraformer-large*")), None)
+    vad = next(iter(root.glob("speech_fsmn_vad*")), None)
+    punc = next(iter(root.glob("punc_ct-transformer*")), None)
+    if not (asr and vad):
+        raise SystemExit(f"[asr] 模型目录里缺 paraformer/vad：{root}")
+    MODELS, ASR, VAD, PUNC = root, asr, vad, punc
+    print(f"[asr] 模型根目录：{root}", flush=True)
+    return root
+
+
+def _load_faster_whisper(model_name: str):
+    """默认引擎：faster-whisper（国内走 hf-mirror，不然下不动）。"""
+
+    import os
+
+    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    from faster_whisper import WhisperModel
+
+    print(f"[asr] 加载 faster-whisper（{model_name}）…", flush=True)
+    return WhisperModel(model_name, device="cpu", compute_type="int8")
+
+
+def _load_funasr():
+    from funasr import AutoModel
+
+    print("[asr] 加载 funasr paraformer …", flush=True)
+    kwargs = {"model": str(ASR), "vad_model": str(VAD), "disable_update": True}
+    if PUNC is not None:
+        kwargs["punc_model"] = str(PUNC)
+    return AutoModel(**kwargs)
+
+
+def get_model():
+    global _model, _engine
+    with _lock:
+        if _model is not None:
+            return _model
+        want = ENGINE
+        if want in ("auto", "faster-whisper"):
+            try:
+                _model = _load_faster_whisper(WHISPER_MODEL)
+                _engine = "faster-whisper"
+                print(f"[asr] 引擎就绪：faster-whisper / {WHISPER_MODEL}", flush=True)
+                return _model
+            except Exception as exc:  # noqa: BLE001
+                if want == "faster-whisper":
+                    raise
+                print(f"[asr] faster-whisper 不可用（{exc}），改用 funasr", flush=True)
+        _model = _load_funasr()
+        _engine = "funasr"
+        print("[asr] 引擎就绪：funasr paraformer", flush=True)
+        return _model
 
 
 def transcribe(path: Path) -> str:
     model = get_model()
+    if _engine == "faster-whisper":
+        segments, _info = model.transcribe(str(path), language="zh", vad_filter=True)
+        return "".join(seg.text for seg in segments).strip()
     res = model.generate(input=str(path), batch_size_s=300)
     if not res:
         return ""
-    text = str(res[0].get("text", "") or "").strip()
-    return text
+    return str(res[0].get("text", "") or "").strip()
 
 
 def parse_multipart(body: bytes, content_type: str) -> dict[str, bytes]:
@@ -93,7 +146,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         if self.path.startswith("/health"):
-            self._json(200, {"status": "ok", "engine": "funasr-paraformer"})
+            self._json(200, {"status": "ok", "engine": _engine})
         else:
             self._json(404, {"error": "not found"})
 
@@ -140,8 +193,22 @@ def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=9881)
     ap.add_argument("--preload", action="store_true", help="启动时就加载模型")
+    ap.add_argument("--models", default="", help="funasr 模型根目录（含 paraformer/vad/punc）")
+    ap.add_argument("--engine", default="auto", choices=["auto", "faster-whisper", "funasr"])
+    ap.add_argument("--whisper-model", default="small", help="faster-whisper 的模型名或本地目录")
     args = ap.parse_args()
 
+    global ENGINE, WHISPER_MODEL
+    ENGINE = args.engine
+    WHISPER_MODEL = args.whisper_model
+
+    # funasr 模型只在需要时才有要求
+    try:
+        resolve_models(args.models or None)
+    except SystemExit:
+        if ENGINE == "funasr":
+            raise
+        print("[asr] 没找到 funasr 模型，只用 faster-whisper", flush=True)
     if args.preload:
         get_model()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
