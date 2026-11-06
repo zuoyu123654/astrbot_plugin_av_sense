@@ -34,7 +34,7 @@ except Exception:  # noqa: BLE001
     TextPart = None  # type: ignore[assignment]
 
 PLUGIN_NAME = "astrbot_plugin_av_sense"
-PLUGIN_VERSION = "0.3.1"
+PLUGIN_VERSION = "0.3.2"
 
 
 def _has_whisper(python: str | None) -> bool:
@@ -114,7 +114,7 @@ class AVSensePlugin(Star):
         try:
             self.work_dir = Path(StarTools.get_data_dir(PLUGIN_NAME)) / "media"
         except Exception:  # noqa: BLE001
-            self.work_dir = PLUG / "data" / "media"
+            self.work_dir = Path(__file__).resolve().parent / "data" / "media"
         self.work_dir.mkdir(parents=True, exist_ok=True)
         # 把旧版放在系统 temp 里的东西搬过来（7 天清理照旧）
         try:
@@ -359,7 +359,8 @@ class AVSensePlugin(Star):
         models = self._find_asr_models()
         python = self._find_asr_python()
         script = Path(__file__).resolve().parent / "optional_asr" / "asr_server.py"
-        need_models = engine == "funasr" or (engine == "auto" and not _has_whisper(python))
+        has_whisper = await asyncio.to_thread(_has_whisper, python)
+        need_models = engine == "funasr" or (engine == "auto" and not has_whisper)
         if (need_models and not models) or not python or not script.is_file():
             logger.info(
                 "[AVSense] 没有可用的本机 ASR（引擎=%s｜模型=%s｜python=%s｜脚本=%s），跳过转写",
