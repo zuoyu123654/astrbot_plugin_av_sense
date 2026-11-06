@@ -34,7 +34,7 @@ except Exception:  # noqa: BLE001
     TextPart = None  # type: ignore[assignment]
 
 PLUGIN_NAME = "astrbot_plugin_av_sense"
-PLUGIN_VERSION = "0.3.0"
+PLUGIN_VERSION = "0.3.1"
 
 
 def _has_whisper(python: str | None) -> bool:
