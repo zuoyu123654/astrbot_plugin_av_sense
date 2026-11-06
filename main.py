@@ -26,7 +26,7 @@ from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, StarTools, register
 
 try:  # AstrBot 4.17+
     from astrbot.core.agent.message import TextPart  # type: ignore
@@ -34,7 +34,7 @@ except Exception:  # noqa: BLE001
     TextPart = None  # type: ignore[assignment]
 
 PLUGIN_NAME = "astrbot_plugin_av_sense"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.3.0"
 
 
 def _has_whisper(python: str | None) -> bool:
@@ -110,8 +110,23 @@ class AVSensePlugin(Star):
 
         self.ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
         self.ffprobe = shutil.which("ffprobe") or "ffprobe"
-        self.work_dir = Path(tempfile.gettempdir()) / "av_sense"
+        # 临时媒体放插件自己的数据目录（符合数据持久化审计），不再丢系统 temp
+        try:
+            self.work_dir = Path(StarTools.get_data_dir(PLUGIN_NAME)) / "media"
+        except Exception:  # noqa: BLE001
+            self.work_dir = PLUG / "data" / "media"
         self.work_dir.mkdir(parents=True, exist_ok=True)
+        # 把旧版放在系统 temp 里的东西搬过来（7 天清理照旧）
+        try:
+            legacy = Path(tempfile.gettempdir()) / "av_sense"
+            if legacy.is_dir():
+                for item in list(legacy.iterdir()):
+                    target = self.work_dir / item.name
+                    if not target.exists():
+                        shutil.move(str(item), str(target))
+                logger.info("[AVSense] 已把旧临时目录内容搬到 %s", self.work_dir)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[AVSense] 旧目录搬迁跳过：%s", exc)
 
     # ── 生命周期：定时清理旧文件 ──────────────────────────────────────
     async def initialize(self) -> None:
