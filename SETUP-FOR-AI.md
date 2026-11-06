@@ -163,8 +163,20 @@ GPT-SoVITS 的 `runtime/python.exe`），自动拉起 `optional_asr/asr_server.p
 
 ### 5.4 清理
 
-盯一眼临时目录（Windows：`%TEMP%\av_sense`）：里面的帧/音频文件超过 `retain_days` 天会被删掉；
+临时媒体**不放系统临时目录**，而是放在插件自己的数据目录（符合 AstrBot 的数据持久化规范）：
+
+```
+<AstrBot>/data/plugin_data/astrbot_plugin_av_sense/media/
+  ├── 帧图：frame_*.jpg
+  └── 音频：audio_*.wav
+```
+
+里面的帧/音频文件超过 `retain_days` 天会被删掉；
 启动日志里那句「保留 7.0 天，后台每 60 分钟清理一次」就是它。
+
+> 旧版本（≤0.2.x）把它们放在 `%TEMP%\av_sense`。升级到 0.3.0 之后，首次启动会自动把旧目录里的文件
+> 搬到新位置，日志里会出现「已把旧临时目录内容搬到 …」。所以 `%TEMP%\av_sense` 里现在应该是空的，
+> 空目录本身可以手动删掉。
 
 ---
 

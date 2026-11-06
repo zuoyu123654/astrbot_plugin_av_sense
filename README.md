@@ -1,4 +1,4 @@
-# 语音视频感知（astrbot_plugin_av_sense）
+﻿# 语音视频感知（astrbot_plugin_av_sense）
 
 她听得懂你发的语音、看得懂你发的视频。**本地识别，不花钱。**
 
@@ -97,7 +97,7 @@ AI 会照 `SETUP-FOR-AI.md` 检查 ffmpeg、语音识别、模型能不能看图
 抽帧 + 转写要几秒；超过 3 分钟的部分不看。可以把 `frame_step_seconds` 调大、`max_frames` 调小。
 
 **Q：磁盘会不会被塞满？**
-默认 7 天自动清理（`retain_days`）。文件都在系统临时目录的 `av_sense/` 下。
+默认 7 天自动清理（`retain_days`）。文件在插件数据目录 `data/plugin_data/astrbot_plugin_av_sense/media/` 下（旧版的 `%TEMP%\av_sense` 会在升级时自动搬过去）。
 
 **Q：需要装别的插件吗？**
 不需要。语音识别要么用 AstrBot 自带的，要么自己起一个 ASR 服务（`SETUP-FOR-AI.md` 里有说明）。
