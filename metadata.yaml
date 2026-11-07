@@ -21,7 +21,7 @@ desc: >-
 
   AI 会检查 ffmpeg、语音识别、模型能不能看图，然后发一条语音和一条视频做验证，
   最后告诉你哪些能力通了。
-version: 0.3.3
+version: 0.3.4
 author: paopao
 repo: https://github.com/zuoyu123654/astrbot_plugin_av_sense
 astrbot_version: ">=4.17.0"

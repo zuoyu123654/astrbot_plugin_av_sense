@@ -8,7 +8,7 @@
    不足 5 帧就把间隔压短补到 5 帧 → 帧当图片喂给模型看
    → 同时把前 3 分钟的音轨转文字
 
-只依赖：ffmpeg / ffprobe、本机 ASR 服务（D:\\app1\\asr\\asr_server.py，端口 9881）、aiocqhttp。
+只依赖：ffmpeg / ffprobe、本机 ASR 服务（插件自带的 optional_asr/asr_server.py，端口可在配置里改）、aiocqhttp。
 不调用别的 AstrBot 插件。
 """
 
@@ -34,7 +34,7 @@ except Exception:  # noqa: BLE001
     TextPart = None  # type: ignore[assignment]
 
 PLUGIN_NAME = "astrbot_plugin_av_sense"
-PLUGIN_VERSION = "0.3.3"
+PLUGIN_VERSION = "0.3.4"
 
 
 def _has_whisper(python: str | None) -> bool:
@@ -113,8 +113,14 @@ class AVSensePlugin(Star):
         # 临时媒体放插件自己的数据目录（符合数据持久化审计），不再丢系统 temp
         try:
             self.work_dir = Path(StarTools.get_data_dir(PLUGIN_NAME)) / "media"
-        except Exception:  # noqa: BLE001
-            self.work_dir = Path(__file__).resolve().parent / "data" / "media"
+        except Exception as exc:  # noqa: BLE001
+            # 拿不到插件数据目录时，不要往插件安装目录里写（升级/插件市场会覆盖，也不符合数据审计）
+            logger.error(
+                "[AVSense] 拿不到插件数据目录（%s），临时文件改放系统临时目录 %s",
+                exc,
+                Path(tempfile.gettempdir()) / "av_sense_data",
+            )
+            self.work_dir = Path(tempfile.gettempdir()) / "av_sense_data"
         self.work_dir.mkdir(parents=True, exist_ok=True)
         # 把旧版放在系统 temp 里的东西搬过来（7 天清理照旧）
         try:
