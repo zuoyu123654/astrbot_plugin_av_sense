@@ -55,6 +55,12 @@ ffprobe -version
 
 ## 3. 配语音识别（二选一）
 
+> **先说清楚一件事：语音消息和视频里的声音，共用同一套转写，只配一次。**
+> 代码里只有一个 `_transcribe()`，语音消息和视频音轨都走它（视频只是多截了前 3 分钟）。
+> 顺序是：**本机 ASR 优先**（`auto_local_asr` 开着且找得到就用）→ 本机不可用才退到
+> AstrBot 面板里配的「语音转文字」provider。
+> 所以下面两节任选一种配好，**视频和语音会自动用同一个模型**，不用配两遍。
+
 ### 3.1 用 AstrBot 自带的（推荐）
 
 面板 → 配置 → **语音转文字**：选一个 provider（Whisper API / MiMo STT / 自建 whisper 服务等），填 key 和地址，
@@ -71,6 +77,9 @@ ffprobe -version
 > （不是 `key` 数组），否则会报 `Missing credentials`。
 
 ### 3.2 自建 ASR（离线、不花钱）—— 插件会自动找、自动起
+
+**这一节配好之后，视频音轨也用这个模型转写**（和语音同一条路，不是只给语音用）。
+如果本机同时有可用的自建服务，它会**优先于** AstrBot 面板里的 STT provider。
 
 **默认引擎是 faster-whisper**：插件会在本机找带 `faster_whisper` 的 python（例如各种
 GPT-SoVITS 的 `runtime/python.exe`），自动拉起 `optional_asr/asr_server.py`（端口 9881）。
@@ -156,6 +165,11 @@ GPT-SoVITS 的 `runtime/python.exe`），自动拉起 `optional_asr/asr_server.p
 ```
 
 判定：**帧数 ≥ 5**、**转写字数 > 0**、她说的内容能对上视频。
+
+**顺手确认「视频用的是不是同一套语音模型」**：翻日志里转写那一行——
+`[AVSense] 本机转写成功（N 字）` 或 `[AVSense] 用框架 STT 转写成功（N 字）`。
+语音和视频这两次应该是**同一种来源**（比如都有「本机转写成功」）；如果语音走本机、视频却落到
+「框架 STT」，说明本机 ASR 那次没起来（看 3.2 的 `local_asr_python` / 端口 / 模型目录）。
 
 ### 5.3 长视频
 
