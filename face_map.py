@@ -224,7 +224,25 @@ def _load_snowluma_catalog() -> dict[str, str]:
     return _EXTRA_FACE_MAP
 
 
-_OVERRIDE_PATH = r"D:\app1\AstrBot\data\plugin_data\astrbot_plugin_sticker_sense\face_overrides.json"
+def _default_override_path() -> str:
+    """覆盖表放在**本插件自己的** plugin_data 下（不写别人的目录）。"""
+
+    import os
+    from pathlib import Path
+
+    try:
+        plugin_dir = Path(__file__).resolve().parent           # .../data/plugins/<本插件>
+        data_root = plugin_dir.parents[1]                      # .../data
+        target = data_root / "plugin_data" / plugin_dir.name
+        target.mkdir(parents=True, exist_ok=True)
+        return str(target / "face_overrides.json")
+    except Exception:  # noqa: BLE001
+        return os.path.join(
+            os.environ.get("TEMP", "."), "av_sense_face_overrides.json"
+        )
+
+
+_OVERRIDE_PATH = _default_override_path()
 _OVERRIDE_MAP: dict[str, str] = {}
 _OVERRIDE_MTIME: float = 0.0
 
@@ -263,7 +281,11 @@ def add_override(face_id: int | str, name: str) -> bool:
     mapping = dict(_load_overrides())
     mapping[str(face_id)] = name
     try:
-        json.dump(mapping, open(_OVERRIDE_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        import os
+
+        os.makedirs(os.path.dirname(_OVERRIDE_PATH) or ".", exist_ok=True)
+        with open(_OVERRIDE_PATH, "w", encoding="utf-8") as fh:
+            json.dump(mapping, fh, ensure_ascii=False, indent=2)
         _OVERRIDE_MTIME = 0.0
         _load_overrides()
         return True

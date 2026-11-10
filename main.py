@@ -37,7 +37,7 @@ except Exception:  # noqa: BLE001
     TextPart = None  # type: ignore[assignment]
 
 PLUGIN_NAME = "astrbot_plugin_av_sense"
-PLUGIN_VERSION = "0.4.0"
+PLUGIN_VERSION = "0.4.1"
 
 
 def _has_whisper(python: str | None) -> bool:
@@ -433,11 +433,25 @@ class AVSensePlugin(Star):
         return False
 
     async def _transcribe(self, src: str, limit: float | None = None) -> str:
-        """抽音轨（可选截断前 limit 秒）→ 本机 ASR。"""
+        """抽音轨（可选截断前 limit 秒）→ 本机 ASR。
+
+        临时 wav 无论成功失败都立刻删掉（别等 7 天后台清理兜底）。
+        """
 
         if not self.enable_asr:
             return ""
         wav = self.work_dir / f"a_{uuid.uuid4().hex}.wav"
+        try:
+            return await self._transcribe_with_wav(src, limit, wav)
+        finally:
+            try:
+                wav.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    async def _transcribe_with_wav(
+        self, src: str, limit: float | None, wav: Path
+    ) -> str:
         args = [self.ffmpeg, "-y", "-loglevel", "error"]
         if limit:
             args += ["-t", f"{limit:.1f}"]
