@@ -28,13 +28,16 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools, register
 
+from .face_map import get_face_name
+from .sticker_detector import MessageSenseResult, StickerDetector
+
 try:  # AstrBot 4.17+
     from astrbot.core.agent.message import TextPart  # type: ignore
 except Exception:  # noqa: BLE001
     TextPart = None  # type: ignore[assignment]
 
 PLUGIN_NAME = "astrbot_plugin_av_sense"
-PLUGIN_VERSION = "0.3.5"
+PLUGIN_VERSION = "0.4.0"
 
 
 def _has_whisper(python: str | None) -> bool:
@@ -58,7 +61,7 @@ def _has_whisper(python: str | None) -> bool:
 @register(
     PLUGIN_NAME,
     "paopao",
-    "语音视频感知：语音转文字 + 视频抽帧看图（只处理前 3 分钟）",
+    "语音视频感知：语音转文字 + 视频抽帧看图 + 表情包/梗图识别（只处理前 3 分钟）",
     PLUGIN_VERSION,
 )
 class AVSensePlugin(Star):
@@ -70,6 +73,21 @@ class AVSensePlugin(Star):
 
         self.enable_voice = bool(cfg.get("enable_voice", True))
         self.enable_video = bool(cfg.get("enable_video", True))
+        # ── 表情 / 表情包感知（并自 sticker_sense）────────────────────
+        self.enable_sticker_sense = bool(cfg.get("enable_sticker_sense", True))
+        self.enable_face_translation = bool(cfg.get("enable_face_translation", True))
+        self.prompt_style = str(cfg.get("prompt_style", "natural") or "natural").strip()
+        self.enable_meme_reaction = bool(cfg.get("enable_meme_reaction", False))
+        self.auto_fill_empty_prompt = bool(cfg.get("auto_fill_empty_prompt", True))
+        self.custom_prompt_guide = str(cfg.get("custom_prompt_guide", "") or "").strip()
+        try:
+            self.max_sticker_dimension = max(256, int(cfg.get("max_sticker_dimension", 640) or 640))
+        except (TypeError, ValueError):
+            self.max_sticker_dimension = 640
+        self.sticker_detector = StickerDetector(
+            max_sticker_dimension=self.max_sticker_dimension
+        )
+
         self.enable_asr = bool(cfg.get("enable_asr", True))
         self.asr_url = str(
             cfg.get("asr_url", "http://127.0.0.1:9881/v1/audio/transcriptions")
@@ -143,6 +161,15 @@ class AVSensePlugin(Star):
             self.retain_days,
             self.cleanup_minutes,
             kept,
+        )
+        logger.info(
+            "[AVSense] 表情感知：%s｜风格=%s｜表情翻译=%s｜斗图提示=%s｜空消息兜底=%s｜表情包尺寸上限=%spx",
+            "启用" if self.enable_sticker_sense else "停用",
+            self.prompt_style,
+            "开" if self.enable_face_translation else "关",
+            "开" if self.enable_meme_reaction else "关",
+            "开" if self.auto_fill_empty_prompt else "关",
+            self.max_sticker_dimension,
         )
 
     async def terminate(self) -> None:
@@ -635,6 +662,212 @@ class AVSensePlugin(Star):
             logger.warning("[AVSense] 注入失败：%s", exc)
 
     # ── 主钩子 ────────────────────────────────────────────────────────
+    # ── 表情 / 表情包感知 ────────────────────────────────────────────
+    def _build_style_guide(self) -> str:
+        """根据配置返回表情包互动风格要求。"""
+
+        style = self.prompt_style
+        if style == "roast":
+            return (
+                "用户正在使用表情包与你幽默互怼或戏谑调侃！"
+                "请以机智幽默、轻度吐槽或动漫式傲娇的方式接招，"
+                "切勿死板看图说话。但注意必须在严格维持你既有性格人设的前提下进行，不可脱离人设！"
+            )
+        if style == "humorous":
+            return (
+                "用户正在使用表情包与你斗图或幽默互动！"
+                "请积极接梗，以机智风趣、生动活泼且贴合人设的口吻进行互动吐槽，"
+                "切勿死板、机械地描述画面细节。"
+            )
+        if style == "gentle":
+            return (
+                "用户正在借由表情包委婉传达自身心情或社交情感。"
+                "请细心体察对方表达的微妙情绪，给予温柔贴切、有共鸣的回应，避免生硬的看图说话。"
+            )
+        return (
+            "请结合当前对话语境，将其理解为用户的情绪反应、打趣或表情互动。"
+            "请像现实生活中真人聊天那样自然、有温度地回应，"
+            "切勿生硬地逐一描述画面的构图或文字细节，除非用户明确要求解释图意。"
+        )
+
+    def _build_sticker_guidance(self, sense: MessageSenseResult) -> str:
+        """生成注入给模型的「视觉与社交交互指引」。"""
+
+        style_rule = self._build_style_guide()
+        display_faces = sense.faces if self.enable_face_translation else []
+
+        lines: list[str] = [
+            "<image_interaction_guide>",
+            "【视觉与社交交互指引】",
+        ]
+
+        if sense.has_stickers and not sense.has_normal_photos:
+            lines.append("检测到用户发送的内容为【表情包 / 梗图 / 趣味动图】（非日常摄影或截图）：")
+            for item in sense.images:
+                lines.append(f"- {item.describe()}")
+            if display_faces:
+                lines.append(f"- 伴随表情符号: {', '.join(display_faces)}")
+            lines.append(f"【互动原则】：{style_rule}")
+        elif sense.has_stickers and sense.has_normal_photos:
+            lines.append("检测到用户同时发送了【表情包】与【普通图片/截图】：")
+            for item in sense.images:
+                lines.append(f"- {item.describe()}")
+            if display_faces:
+                lines.append(f"- 伴随表情符号: {', '.join(display_faces)}")
+            lines.append(
+                f"【互动原则】：请区分对待——对表情包请按社交梗与情绪自然反应（{style_rule}）；"
+                "对普通照片或截图则正常关注内容并提供协助或评论。"
+            )
+        elif sense.has_normal_photos:
+            lines.append("检测到用户发送的内容为【普通图片 / 拍摄照片 / 屏幕截图】：")
+            for item in sense.images:
+                lines.append(f"- {item.describe()}")
+            if display_faces:
+                lines.append(f"- 伴随表情符号: {', '.join(display_faces)}")
+            lines.append(
+                "【互动原则】：用户正在分享现实生活细节、寻求帮助或展示内容，"
+                "请结合对话上下文正常理解与分析图片内容。"
+            )
+        elif display_faces:
+            lines.append(f"检测到用户发送了表情符号: {', '.join(display_faces)}。")
+            lines.append("【互动原则】：请结合该表情符号所体现的语气与情绪倾向，自然贴合地回应用户。")
+
+        if sense.has_stickers:
+            if sense.has_animated_stickers:
+                lines.append(
+                    "【动图认知规范】：检测到动态表情包。若底层视觉服务将其分解为多帧排列，"
+                    "此排版仅为展示连贯动作，切勿将其误认为九宫格、拼图或数其帧数，"
+                    "请直接理解其连贯动作与情绪含义。"
+                )
+            lines.append(
+                "【意图与人设原则】：若表情包带有调侃、赞同、认怂或撒娇等潜台词，请自然接梗反应；"
+                "无论何种互动，必须严格保持你既有的角色人设底线，不可脱离人设。"
+            )
+            if self.enable_meme_reaction:
+                lines.append(
+                    "【双向斗图提示】：用户开启了斗图互动倾向。如果你觉得当前语境非常适合以表情包回敬"
+                    "（如极度无语、开怀大笑、傲娇吐槽时），可根据平台支持的表情或在适当情境下配合斗图，"
+                    "但请以文字对话为主，严禁每句都机械性回复表情。"
+                )
+
+        if self.custom_prompt_guide:
+            lines.append(f"【个性化补充指引】：{self.custom_prompt_guide}")
+
+        lines.append("</image_interaction_guide>")
+        return "\n".join(lines)
+
+    async def _inject_sticker_sense(
+        self, event: AstrMessageEvent, req: Any, skip_images: bool = False
+    ) -> None:
+        """把表情/表情包感知结果注入到本轮请求。"""
+
+        raw_message = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        components = getattr(getattr(event, "message_obj", None), "message", [])
+        image_paths = [] if skip_images else list(getattr(req, "image_urls", None) or [])
+
+        try:
+            sense = self.sticker_detector.analyze_event(
+                image_paths=image_paths,
+                raw_message=raw_message,
+                components=components,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[AVSense] 表情感知分析失败：%s", exc)
+            return
+
+        if not sense.has_any_visual_or_emoji:
+            return
+
+        # 纯表情/纯表情包：补一句文字，避免空 prompt 被当成没内容
+        if self.auto_fill_empty_prompt and not str(getattr(req, "prompt", "") or "").strip():
+            if sense.has_stickers:
+                req.prompt = "（用户向你发送了一张表情包）"
+            elif sense.has_normal_photos:
+                req.prompt = "（用户向你分享了一张图片）"
+            elif sense.faces and self.enable_face_translation:
+                req.prompt = f"（用户向你发送了表情：{', '.join(sense.faces)}）"
+            elif sense.faces:
+                req.prompt = "（用户向你发送了表情符号）"
+
+        self._inject_text(req, self._build_sticker_guidance(sense))
+        logger.debug(
+            "[AVSense] 表情感知注入：%s 张图 / %s 个表情",
+            len(sense.images),
+            len(sense.faces),
+        )
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=-110)
+    async def prefill_face_text(self, event: AstrMessageEvent) -> None:
+        """纯表情/纯表情包消息补一句文字。
+
+        QQ 的「动态表情」「商城表情」在协议里只是一个 Face/Mface 段，没有文字也没有图片，
+        AstrBot 会当成空消息直接跳过——用户发表情，机器人一句话都不回。
+        这里在进主链之前把文字补上，后面的 on_llm_request 才能正常注入感知提示。
+        """
+
+        if not self.enable_sticker_sense or not self.auto_fill_empty_prompt:
+            return
+        try:
+            current = str(event.message_str or "").strip()
+        except Exception:  # noqa: BLE001
+            current = ""
+        if current:
+            return
+        try:
+            components = list(event.message_obj.message or [])
+        except Exception:  # noqa: BLE001
+            return
+
+        faces: list[str] = []
+        mfaces = 0
+        has_media = False
+        for comp in components:
+            name = type(comp).__name__
+            if name == "Mface":
+                mfaces += 1
+                try:
+                    logger.info(
+                        "[AVSense] Mface RAW: %s",
+                        comp.to_dict() if hasattr(comp, "to_dict") else str(comp),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            elif name == "Face":
+                fid = getattr(comp, "id", None)
+                label = ""
+                try:
+                    label = get_face_name(fid) if fid is not None else ""
+                except Exception:  # noqa: BLE001
+                    label = ""
+                if label and not label.startswith("表情_"):
+                    faces.append(label)
+                else:
+                    faces.append("")
+                    try:
+                        raw_dump = comp.to_dict() if hasattr(comp, "to_dict") else str(comp)
+                    except Exception:  # noqa: BLE001
+                        raw_dump = str(comp)
+                    logger.info("[AVSense] 未识别表情 RAW: %s", raw_dump)
+            elif name in ("Image", "Video"):
+                has_media = True
+        if not faces and not mfaces and not has_media:
+            return
+
+        known = [f for f in faces if f]
+        if known:
+            filled = "（用户发来了 QQ 表情：" + "、".join(known) + "）"
+        elif faces or mfaces:
+            filled = "（用户发来了一个 QQ 表情，看不出具体是哪个）"
+        else:
+            filled = "（用户发来一张图片或表情包）"
+        event.message_str = filled
+        try:
+            event.message_obj.message_str = filled
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info("[AVSense] 空消息已补文字: %s", filled)
+
+    # ── 主钩子 ────────────────────────────────────────────────────────
     @filter.on_llm_request()
     async def inject_media(self, event: AstrMessageEvent, req: Any):
         if getattr(event, "_av_sense_done", False):
@@ -644,18 +877,25 @@ class AVSensePlugin(Star):
         except Exception:  # noqa: BLE001
             pass
 
-        # ① 视频
+        handled_media = False
+
+        # ① 视频（抽帧 + 转写声音）
         if self.enable_video:
             video = self._find_media(event, "Video")
             if video is not None:
                 await self._handle_video(video, event, req)
-                return
+                handled_media = True
 
         # ② 语音（AstrBot 自己已经转出文字的话就不再重复）
-        if self.enable_voice:
+        if self.enable_voice and not handled_media:
             record = self._find_media(event, "Record")
             if record is not None:
                 await self._handle_voice(record, event, req)
+                handled_media = True
+
+        # ③ 表情 / 表情包感知（视频那条：抽出来的帧不算表情包，只看表情符号）
+        if self.enable_sticker_sense:
+            await self._inject_sticker_sense(event, req, skip_images=handled_media)
 
     async def _handle_voice(self, comp: Any, event: AstrMessageEvent, req: Any) -> None:
         existing = str(getattr(event, "message_str", "") or "").strip()

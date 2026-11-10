@@ -9,6 +9,65 @@
     "description": "视频抽帧看图 + 音轨转文字。",
     "default": true
   },
+  "enable_sticker_sense": {
+    "description": "启用表情与表情包感知",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后自动识别用户发的是表情包还是普通图片，并提示模型以人类社交方式自然回应。"
+  },
+  "enable_face_translation": {
+    "description": "启用 QQ 原生表情翻译",
+    "type": "bool",
+    "default": true,
+    "hint": "把 QQ 小黄脸（Face）和商城表情（Mface）转成文字语义，让模型看得懂。"
+  },
+  "prompt_style": {
+    "description": "表情包交互引导风格",
+    "type": "string",
+    "default": "natural",
+    "options": [
+      "natural",
+      "humorous",
+      "gentle",
+      "roast"
+    ],
+    "labels": [
+      "自然日常",
+      "幽默接梗",
+      "温柔体察",
+      "傲娇互怼/吐槽"
+    ],
+    "hint": "natural 自然日常 / humorous 幽默接梗 / gentle 温柔体察 / roast 傲娇互怼（都要求守住原人设）。"
+  },
+  "max_sticker_dimension": {
+    "description": "表情包启发式最大边长（像素）",
+    "type": "int",
+    "default": 640,
+    "slider": {
+      "min": 256,
+      "max": 1280,
+      "step": 32
+    },
+    "hint": "协议没给表情包标识时，长宽都在这尺寸内的静态图优先判为表情包/梗图。"
+  },
+  "auto_fill_empty_prompt": {
+    "description": "纯表情/表情包空文本自动兜底",
+    "type": "bool",
+    "default": true,
+    "hint": "用户只发表情或表情包、没有文字时，自动补一句语义文字，避免机器人不回话。"
+  },
+  "enable_meme_reaction": {
+    "description": "启用双向斗图倾向提示",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，氛围合适时允许模型主动斗图/配表情；需要装了表情包发送类插件才有意义。"
+  },
+  "custom_prompt_guide": {
+    "description": "自定义表情包引导追加词（可选）",
+    "type": "text",
+    "default": "",
+    "hint": "选填，会作为额外补充指引追加到表情包提示里。"
+  },
   "max_video_seconds": {
     "type": "int",
     "description": "视频只处理前多少秒（默认 180 = 3 分钟），超长视频不会卡住。",

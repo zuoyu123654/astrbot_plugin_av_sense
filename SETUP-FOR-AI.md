@@ -8,7 +8,16 @@
 
 ---
 
-## 0. 先问使用者两件事
+## 0. 先问使用者三件事
+
+> 先说清楚：这个插件现在管三样——**语音转文字**、**视频抽帧看图**、**表情包/梗图识别**。
+
+1. 语音识别用 AstrBot 自带的，还是本机自建（离线）？
+2. 主模型能不能看图（视频必需）？
+3. **表情包要不要接梗**？接的话选风格：自然 / 幽默接梗 / 温柔体察 / 傲娇互怼。
+   （默认 `natural`；她本身是傲娇人设的话，`roast` 更贴。）
+
+（原来的 0 节内容见下，问法照旧。）
 
 1. 主模型**能不能看图**（多模态）？——视频要靠它。不能的话，先把这一步告诉他：
    视频会退化成「只听得见声音」，得换一个支持图片输入的模型。
@@ -194,6 +203,44 @@ GPT-SoVITS 的 `runtime/python.exe`），自动拉起 `optional_asr/asr_server.p
 
 ---
 
+## 5.5 表情与表情包（和语音视频同一条链）
+
+### 配置
+
+```json
+{
+  "enable_sticker_sense": true,
+  "enable_face_translation": true,
+  "prompt_style": "natural",
+  "max_sticker_dimension": 640,
+  "auto_fill_empty_prompt": true,
+  "enable_meme_reaction": false,
+  "custom_prompt_guide": ""
+}
+```
+
+- `prompt_style`：`natural` 自然日常 / `humorous` 幽默接梗 / `gentle` 温柔体察 / `roast` 傲娇互怼
+  （四种都要求**守住原人设**，不许脱离）。
+- `max_sticker_dimension`：协议端没给「这是表情包」标记时，长宽都在这个尺寸内的静态图优先判为表情包；
+  生活照/截图一般远超这个尺寸，不会被误判。
+- `enable_meme_reaction`：开了才允许她在合适氛围下用表情回敬（需要另装表情包发送插件才有意义）。
+
+### 判定顺序（照这个理解，别自己发明）
+
+1. 协议段 `subType` ∈ {1,2,3,4,7,8,9} → 表情包；
+2. 协议段 `summary` 含「动画表情 / 表情 / 贴纸」→ 表情包；
+3. 本地文件多帧（GIF / 动态 WebP）→ 表情包 + 标记 `has_animated_stickers`；
+4. 单边 ≤ `max_sticker_dimension`、宽高比 ≥ 0.4、≤ 2.5MB → 表情包；
+5. 其余 → 普通照片/截图。
+
+### 验收
+
+1. 发一个 QQ 小黄脸 → 她应该按那个表情的情绪回应（日志里 `[AVSense] 空消息已补文字: （用户发来了 QQ 表情：…）`）。
+2. 发一个表情包（不要配文字）→ 她不该回「你发了什么」，而是顺着梗接；
+   日志能看到注入的 `<image_interaction_guide>`。
+3. 发一张很大的生活照 → 判定为「普通照片」，她会正常看图。
+4. 发一条视频 → 抽的帧**不会被**当成表情包（`skip_images=True` 那条分支）。
+
 ## 6. 排查表
 
 | 症状 | 原因 | 修法 |
@@ -210,6 +257,9 @@ GPT-SoVITS 的 `runtime/python.exe`），自动拉起 `optional_asr/asr_server.p
 ---
 
 ## 7. 配完要告诉使用者什么（照抄改数字）
+
+> 补一句：表情包识别也在这个插件里了，旧的 `sticker_sense` 可以关掉，避免重复注入。
+
 
 > 配好了，现在：
 > - 语音：**能听懂**（走 <框架 STT / 本机 ASR>），听不清会直接说没听清
