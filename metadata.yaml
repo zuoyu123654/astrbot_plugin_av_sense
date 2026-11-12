@@ -16,6 +16,7 @@ desc: >-
      纯表情/纯表情包消息会自动补一句文字，避免她不回话。
   4. 临时文件（图片、音频）保留 7 天后自动删除，可改。
   5. 全部离线可用，不调用其它插件。
+  6. 视频分析可只限主人（video_owner_uids）：别人发的视频直接跳过，不抽帧、不烧 token。
 
   【怎么用】
   装好插件后，把这句话发给你的 AI：
@@ -24,7 +25,7 @@ desc: >-
 
   AI 会检查 ffmpeg、语音识别、模型能不能看图，然后发一条语音和一条视频做验证，
   最后告诉你哪些能力通了。
-version: 0.4.1
+version: 0.5.0
 author: paopao
 repo: https://github.com/zuoyu123654/astrbot_plugin_av_sense
 astrbot_version: ">=4.17.0"
