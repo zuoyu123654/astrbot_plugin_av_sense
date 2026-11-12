@@ -9,6 +9,12 @@
     "description": "视频抽帧看图 + 音轨转文字。",
     "default": true
   },
+  "video_owner_uids": {
+    "type": "string",
+    "description": "视频分析只认这些 QQ 号（逗号分隔）。留空 = 谁发的视频都分析。",
+    "default": "",
+    "hint": "视频要抽帧喂模型，是这里最费 token 的一步。填上主人 QQ 后，群里别人发的视频直接跳过、不抽帧、不花钱。"
+  },
   "enable_sticker_sense": {
     "description": "启用表情与表情包感知",
     "type": "bool",
