@@ -37,7 +37,7 @@ except Exception:  # noqa: BLE001
     TextPart = None  # type: ignore[assignment]
 
 PLUGIN_NAME = "astrbot_plugin_av_sense"
-PLUGIN_VERSION = "0.5.0"
+PLUGIN_VERSION = "0.5.1"
 
 
 def _has_whisper(python: str | None) -> bool:
@@ -129,6 +129,15 @@ class AVSensePlugin(Star):
         self.local_asr_port = max(1024, int(cfg.get("local_asr_port", 9881) or 9881))
         self.local_asr_engine = str(cfg.get("local_asr_engine", "faster-whisper") or "faster-whisper")
         self.whisper_model = str(cfg.get("whisper_model", "small") or "small")
+        # 自动找 GPT-SoVITS 时的搜索根目录：只在这些目录下找，不扫整盘
+        self.asr_search_roots: list[Path] = []
+        raw_roots = str(cfg.get("asr_search_roots", "") or "")
+        for token in raw_roots.replace("，", ",").split(","):
+            token = token.strip()
+            if token:
+                self.asr_search_roots.append(Path(token))
+        if not self.asr_search_roots:
+            self.asr_search_roots = [Path("D:/app1"), Path("C:/app1")]
         self._asr_proc = None
         self._asr_ready = False
         self._asr_checked = False
@@ -308,32 +317,63 @@ class AVSensePlugin(Star):
             return {}
 
     # ── 本机 ASR：自动探测 + 自动拉起 ────────────────────────────────
-    def _find_asr_models(self) -> str | None:
-        """找 funasr 风格的模型目录（speech_paraformer-large*）。找不到返回 None。
+    def _asr_search_roots(self) -> list[Path]:
+        """自动找 GPT-SoVITS 时用的根目录：配置目录 + home + 这些目录所在盘的盘根。"""
 
-        注意：Windows 上不能用 Path(".").glob("D:/...")，那不是绝对路径匹配。
-        """
-
-        roots: list[Path] = [Path("D:/app1"), Path("C:/app1"), Path("D:/"), Path("C:/")]
-        roots += [Path.home()]
+        roots: list[Path] = list(self.asr_search_roots) + [Path.home()]
         seen: set[str] = set()
+        out: list[Path] = []
         for root in roots:
+            key = str(root).lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(root)
+        # 盘根只用来覆盖「GPT-SoVITS 直接放在盘根」的情况，不会往二级目录钻
+        for root in list(out):
+            anchor = Path(root.anchor) if root.anchor else None
+            if anchor is None:
+                continue
+            key = str(anchor).lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(anchor)
+        return out
+
+    @staticmethod
+    def _iter_gsv_dirs(root: Path) -> list[Path]:
+        """在一个根目录下找 GPT-SoVITS；盘根只找一级，其它目录找两级，避免扫整盘。"""
+
+        try:
+            is_drive_root = str(root) in (root.anchor, root.anchor.rstrip("\\/"))
+        except Exception:  # noqa: BLE001
+            is_drive_root = False
+        found: list[Path] = []
+        try:
+            found.extend(root.glob("GPT-SoVITS*"))
+            if not is_drive_root:
+                found.extend(root.glob("*/GPT-SoVITS*"))
+        except Exception:  # noqa: BLE001
+            pass
+        return found
+
+    def _find_asr_models(self) -> str | None:
+        """找 funasr 风格的模型目录（speech_paraformer-large*）。找不到返回 None。"""
+
+        seen: set[str] = set()
+        for root in self._asr_search_roots():
             if not root.is_dir():
                 continue
-            try:
-                for gsv in list(root.glob("GPT-SoVITS*")) + list(root.glob("*/GPT-SoVITS*")):
-                    for sub in (
-                        gsv / "tools" / "asr" / "models",
-                        gsv / "GPT-SoVITS" / "tools" / "asr" / "models",
-                    ):
-                        key = str(sub).lower()
-                        if key in seen or not sub.is_dir():
-                            continue
-                        seen.add(key)
-                        if any(sub.glob("speech_paraformer-large*")):
-                            return str(sub)
-            except Exception:  # noqa: BLE001
-                continue
+            for gsv in self._iter_gsv_dirs(root):
+                for sub in (
+                    gsv / "tools" / "asr" / "models",
+                    gsv / "GPT-SoVITS" / "tools" / "asr" / "models",
+                ):
+                    key = str(sub).lower()
+                    if key in seen or not sub.is_dir():
+                        continue
+                    seen.add(key)
+                    if any(sub.glob("speech_paraformer-large*")):
+                        return str(sub)
         return None
 
     def _find_asr_python(self) -> str | None:
@@ -344,19 +384,16 @@ class AVSensePlugin(Star):
         import sys as _sys
 
         cands: list[str] = []
-        for root in (Path("D:/app1"), Path("C:/app1"), Path("D:/"), Path.home()):
+        for root in self._asr_search_roots():
             if not root.is_dir():
                 continue
-            try:
-                for gsv in list(root.glob("GPT-SoVITS*")) + list(root.glob("*/GPT-SoVITS*")):
-                    for py in (
-                        gsv / "runtime" / "python.exe",
-                        gsv / "GPT-SoVITS" / "runtime" / "python.exe",
-                    ):
-                        if py.is_file():
-                            cands.append(str(py))
-            except Exception:  # noqa: BLE001
-                continue
+            for gsv in self._iter_gsv_dirs(root):
+                for py in (
+                    gsv / "runtime" / "python.exe",
+                    gsv / "GPT-SoVITS" / "runtime" / "python.exe",
+                ):
+                    if py.is_file():
+                        cands.append(str(py))
         if cands:
             return cands[0]
         # 实在没有就用 AstrBot 自己的解释器碰碰运气（有些人是全局装的）
