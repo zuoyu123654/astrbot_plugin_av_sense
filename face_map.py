@@ -154,9 +154,8 @@ QQ_FACE_MAP: dict[int, str] = {
 
 _EXTRA_FACE_MAP: dict[str, str] = {}
 _EXTRA_LOADED_AT: float = 0.0
-_CATALOG_CANDIDATES = (
-    r"D:\app1\SnowLuma\data\sys-face-catalog.json",
-)
+# 不再写死本机路径：靠 SNOWLUMA_DATA_DIR 环境变量，或按目录结构自动推导。
+_CATALOG_CANDIDATES: tuple[str, ...] = ()
 
 
 def _load_snowluma_catalog() -> dict[str, str]:
@@ -168,13 +167,22 @@ def _load_snowluma_catalog() -> dict[str, str]:
     """
     import json
     import os
+    from pathlib import Path
 
     global _EXTRA_FACE_MAP, _EXTRA_LOADED_AT
 
-    paths = list(_CATALOG_CANDIDATES)
+    paths: list[str] = list(_CATALOG_CANDIDATES)
     env_dir = os.environ.get("SNOWLUMA_DATA_DIR")
     if env_dir:
         paths.insert(0, os.path.join(env_dir, "sys-face-catalog.json"))
+    try:
+        # 常见部署：SnowLuma 和 AstrBot 平级（<共同父目录>/SnowLuma/data/...）
+        astrbot_root = Path(__file__).resolve().parents[3]
+        paths.append(
+            str(astrbot_root.parent / "SnowLuma" / "data" / "sys-face-catalog.json")
+        )
+    except Exception:  # noqa: BLE001
+        pass
     paths.append(os.path.join(os.environ.get("APPDATA", ""), "SnowLuma", "data", "sys-face-catalog.json"))
 
     for path in paths:
