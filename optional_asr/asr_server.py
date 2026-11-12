@@ -18,8 +18,9 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-# 模型目录：--models > 环境变量 > 本机默认位置
-DEFAULT_GSV = Path(r"D:\app1\GPT-SoVITS-v2pro-20250604-nvidia50\GPT-SoVITS-v2pro-20250604-nvidia50")
+# 模型目录来源：--models > AVSENSE_ASR_MODELS > AVSENSE_GSV_HOME/tools/asr/models
+# 这里不写死任何本机路径。
+DEFAULT_GSV = None
 ENGINE = "auto"
 WHISPER_MODEL = "small"
 MODELS: Path | None = None
@@ -39,7 +40,17 @@ def resolve_models(path: str | None = None) -> Path:
     import os
 
     cand = path or os.environ.get("AVSENSE_ASR_MODELS") or ""
-    root = Path(cand) if cand else (DEFAULT_GSV / "tools" / "asr" / "models")
+    if cand:
+        root = Path(cand)
+    else:
+        gsv_home = os.environ.get("AVSENSE_GSV_HOME", "").strip()
+        if not gsv_home:
+            raise SystemExit(
+                "[asr] 没指定模型目录：用 --models 指定 models 目录，或设环境变量 "
+                "AVSENSE_ASR_MODELS（models 目录）/"
+                "AVSENSE_GSV_HOME（GPT-SoVITS 根目录）。"
+            )
+        root = Path(gsv_home) / "tools" / "asr" / "models"
     if not root.is_dir():
         raise SystemExit(f"[asr] 模型目录不存在：{root}")
     asr = next(iter(root.glob("speech_paraformer-large*")), None)
