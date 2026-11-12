@@ -149,6 +149,12 @@
     "description": "AstrBot 没配语音转文字时，自动找本机的 funasr 模型并拉起识别服务（端口 9881）。",
     "default": true
   },
+  "asr_search_roots": {
+    "type": "string",
+    "description": "自动找 GPT-SoVITS 时只在这些目录下找（逗号分隔，留空 = D:/app1,C:/app1）。",
+    "default": "",
+    "hint": "不会扫整盘：只在这些目录的一级/二级里找 GPT-SoVITS*，盘根只找一级。机器上目录多、磁盘慢时，填一个更具体的目录能明显加快启动。"
+  },
   "local_asr_python": {
     "type": "string",
     "description": "带 funasr 的 python 路径（留空 = 自动找 GPT-SoVITS 的 runtime/python.exe）。",
