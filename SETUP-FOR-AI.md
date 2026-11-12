@@ -90,8 +90,10 @@ ffprobe -version
 **这一节配好之后，视频音轨也用这个模型转写**（和语音同一条路，不是只给语音用）。
 如果本机同时有可用的自建服务，它会**优先于** AstrBot 面板里的 STT provider。
 
-**默认引擎是 faster-whisper**：插件会在本机找带 `faster_whisper` 的 python（例如各种
-GPT-SoVITS 的 `runtime/python.exe`），自动拉起 `optional_asr/asr_server.py`（端口 9881）。
+**默认引擎是 faster-whisper**：插件会在**你指定的目录**里找带 `faster_whisper` 的 python
+（例如 GPT-SoVITS 的 `runtime/python.exe`），自动拉起 `optional_asr/asr_server.py`（端口 9881）。
+搜索范围由 `asr_search_roots` 决定（默认 `D:/app1,C:/app1`），**不会扫整盘**：
+只在根目录的一级/二级里找 `GPT-SoVITS*`，盘根只找一级。
 首次启动会从 hf-mirror 下 `small` 模型（约 460MB），之后就走本地缓存。
 
 - 想换精度/速度：`whisper_model` = `tiny`/`base`/`small`/`medium`
@@ -267,3 +269,44 @@ GPT-SoVITS 的 `runtime/python.exe`），自动拉起 `optional_asr/asr_server.p
 >   画面交给模型看，声音转成文字
 > - 清理：临时文件保留 **7 天**，到期自动删（`retain_days` 可改）
 > - 依赖：只需要 ffmpeg/ffprobe；不调用其它插件
+
+---
+
+## 8. 安全与路径（给接手的人和 AI）
+
+### 8.1 密钥不要落地
+
+配模型、配 STT 时如果用到 API key：
+
+- **只填在 AstrBot 的配置里**（面板或 `data/cmd_config.json`），不要写进本插件的任何文件。
+- 如果你为了「测一下模型通不通」临时写了个 key 进测试脚本或命令行，**测完立刻删掉**，
+  不要留在 `.py`、`.md`、`.bat`、shell 历史里。
+- 不要把带 key 的配置、日志、截图提交到 Git 或发到群里。
+
+本插件自身不读取、不存储、不转发任何 API key。
+
+### 8.2 没有写死本机路径
+
+0.5.1 起，插件里不再有 `D:\app1\...` 这类硬编码路径。所有位置都通过配置或环境变量给：
+
+| 要找什么 | 怎么指定 |
+| --- | --- |
+| GPT-SoVITS 目录 | `asr_search_roots`（逗号分隔），或 `AVSENSE_GSV_HOME` 环境变量 |
+| funasr 模型目录 | `AVSENSE_ASR_MODELS` 环境变量，或 `asr_server.py --models <目录>` |
+| SnowLuma 表情表 | `SNOWLUMA_DATA_DIR` 环境变量；不设就按「SnowLuma 与 AstrBot 平级」自动推导 |
+| 自建 ASR 的解释器 | `local_asr_python` 配置项 |
+
+### 8.3 搜索范围是有限的
+
+自动找 GPT-SoVITS 时，只在这些地方找：
+
+1. `asr_search_roots` 里的每个目录（一级 + 二级 `GPT-SoVITS*`）
+2. `~`（用户主目录，一级 + 二级）
+3. 上面这些目录所在盘的**盘根**（只找一级，不往下钻）
+
+磁盘慢、目录多的机器上，把 `asr_search_roots` 填成具体目录（比如 `D:/app1`）启动会更快。
+
+### 8.4 视频分析只认指定的人
+
+`video_owner_uids` 填了之后，只有这些 QQ 号发的视频会被抽帧分析；
+别人发的视频直接跳过（不下载、不抽帧、不烧 token）。语音和表情包不受影响，它们走本机、不花钱。
