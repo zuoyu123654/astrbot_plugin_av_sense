@@ -37,7 +37,7 @@ except Exception:  # noqa: BLE001
     TextPart = None  # type: ignore[assignment]
 
 PLUGIN_NAME = "astrbot_plugin_av_sense"
-PLUGIN_VERSION = "0.4.1"
+PLUGIN_VERSION = "0.5.0"
 
 
 def _has_whisper(python: str | None) -> bool:
@@ -97,6 +97,13 @@ class AVSensePlugin(Star):
         self.frame_step = max(1.0, float(cfg.get("frame_step_seconds", 10) or 10))
         self.min_frames = max(1, int(cfg.get("min_frames", 5) or 5))
         self.max_frames = max(self.min_frames, int(cfg.get("max_frames", 24) or 24))
+        # 视频分析只认这些人（留空 = 谁发都分析）。视频要抽帧喂模型，是这里最费 token 的一步。
+        raw_video_owners = str(cfg.get("video_owner_uids", "") or "")
+        self.video_owner_uids = {
+            token.strip()
+            for token in raw_video_owners.replace("，", ",").split(",")
+            if token.strip()
+        }
         # 场景切换补帧 + 相似帧去重
         self.scene_detect = bool(cfg.get("scene_detect", True))
         try:
@@ -881,6 +888,17 @@ class AVSensePlugin(Star):
             pass
         logger.info("[AVSense] 空消息已补文字: %s", filled)
 
+    def _video_allowed(self, event: AstrMessageEvent) -> bool:
+        """视频会不会被分析：配了白名单就只认名单里的人。"""
+
+        if not self.video_owner_uids:
+            return True
+        try:
+            sender = str(event.get_sender_id() or "")
+        except Exception:  # noqa: BLE001
+            sender = ""
+        return sender in self.video_owner_uids
+
     # ── 主钩子 ────────────────────────────────────────────────────────
     @filter.on_llm_request()
     async def inject_media(self, event: AstrMessageEvent, req: Any):
@@ -897,7 +915,12 @@ class AVSensePlugin(Star):
         if self.enable_video:
             video = self._find_media(event, "Video")
             if video is not None:
-                await self._handle_video(video, event, req)
+                if self._video_allowed(event):
+                    await self._handle_video(video, event, req)
+                else:
+                    logger.info(
+                        "[AVSense] 视频抽帧要烧 token，这个人不在 video_owner_uids 里，跳过分析"
+                    )
                 handled_media = True
 
         # ② 语音（AstrBot 自己已经转出文字的话就不再重复）
